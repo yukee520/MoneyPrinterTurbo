@@ -16,5 +16,4 @@ pyyaml
 requests>=2.31.0
 pillow
 python-multipart
-money-printer-turbo
 # Add other dependencies from Money Printer Turbo
