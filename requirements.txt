@@ -24,5 +24,3 @@ redis==5.2.0
 pyyaml==6.0.1
 requests==2.31.0
 
-# Money Printer Turbo (install from GitHub)
-git+https://github.com/yukee520/money-printer-turbo.git@main#egg=money_printer_turbo
