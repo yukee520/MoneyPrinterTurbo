@@ -1,7 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles  # <-- Add this import
 import subprocess
 import os
+import time  # <-- Add this for timestamp
 from typing import Optional
 from pydantic import BaseModel
 
@@ -67,5 +69,5 @@ async def download_file(filename: str):
         return FileResponse(file_path, media_type='video/mp4', filename=filename)
     raise HTTPException(status_code=404, detail="File not found")
 
-# Only expose the outputs directory, not the entire filesystem
+# Mount the outputs directory for static files
 app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
