@@ -1,31 +1,16 @@
-# Core video/image processing
-moviepy==2.1.2
-pillow==9.5.0  # Pinned for stability with moviepy
+# Core API
+fastapi==0.115.0
+uvicorn==0.27.0
+python-multipart==0.0.9
 
-# API dependencies
-fastapi==0.115.6
-uvicorn==0.32.1
-python-multipart==0.0.19
-
-# Audio processing
-edge_tts==6.1.19
-faster-whisper==1.1.0
-azure-cognitiveservices-speech==1.41.1
-
-# AI services
-openai==1.56.1
-google-generativeai==0.8.3  # Note: corrected package name
-dashscope==1.20.14
-g4f==0.5.2.2
-
-# Utilities
-loguru==0.7.3
-redis==5.2.0
-pyyaml==6.0.1
-requests==2.31.0
-
+# Money Printer Turbo and dependencies
+git+https://github.com/yukee520/money-printer-turbo.git
 opencv-python-headless==4.9.0.80
 numpy==1.26.4
+Pillow==10.2.0
 imageio==2.34.0
 imageio-ffmpeg==0.4.9
 ffmpeg-python==0.2.0
+
+# Utilities
+loguru==0.7.2
