@@ -1,52 +1,87 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from pathlib import Path
-import uuid
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
+import subprocess
 import os
-from moviepy.editor import TextClip, concatenate_videoclips
+import time
+import sys
 
+# Initialize FastAPI app
 app = FastAPI()
 
-# Serve the /output folder as static files
-app.mount("/files", StaticFiles(directory="output"), name="output")
-
-# Define input structure
-class PromptRequest(BaseModel):
-    prompt: str
+# Ensure outputs directory exists
+os.makedirs("/tmp/outputs", exist_ok=True)
 
 @app.get("/")
 async def root():
-    return {"message": "Money Printer Turbo is live. POST to /generate"}
+    return {
+        "message": "Money Printer Turbo API is live",
+        "endpoints": {
+            "docs": "/docs",
+            "generate": "POST /generate",
+            "download": "GET /download/{filename}"
+        }
+    }
 
 @app.post("/generate")
-async def generate(request: PromptRequest):
-    prompt_text = request.prompt.strip()
-    if not prompt_text:
-        return JSONResponse(content={"error": "Prompt is empty"}, status_code=400)
-
-    # Unique filename
-    filename = f"{uuid.uuid4().hex}.mp4"
-    output_path = Path("output") / filename
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Generate simple text clip
+async def generate_video(request: Request):
+    """Generate a money printer video with custom text"""
     try:
-        clip = TextClip(prompt_text, fontsize=70, color='white', bg_color='black', size=(720, 1280)).set_duration(5)
-        clip.write_videofile(str(output_path), fps=24, codec='libx264', audio=False)
+        # Get request data
+        data = await request.json()
+        text = data.get("text", "To the moon!")
+        
+        # Create unique filename
+        timestamp = int(time.time())
+        filename = f"video_{timestamp}.mp4"
+        output_path = f"/tmp/outputs/{filename}"
+        
+        # Verify money_printer_turbo is installed
+        try:
+            import money_printer_turbo
+        except ImportError:
+            # Attempt to install if missing
+            subprocess.run([
+                sys.executable, "-m", "pip", "install",
+                "git+https://github.com/yukee520/money-printer-turbo.git"
+            ], check=True)
+            import money_printer_turbo
+        
+        # Generate video (using direct function call)
+        from money_printer_turbo import generate_video as generate
+        generate(
+            text=text,
+            output=output_path,
+            width=1200,
+            height=630
+        )
+        
+        return {
+            "status": "success",
+            "filename": filename,
+            "download_url": f"/download/{filename}",
+            "timestamp": timestamp
+        }
+        
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": str(e),
+                "solution": "Check server logs for installation issues"
+            }
+        )
 
-    return {"status": "video generated", "file": filename}
-
-@app.get("/ping")
-async def ping():
-    return {"status": "OK"}
-
-@app.get("/files/{file_name}")
-async def serve_file(file_name: str):
-    file_path = Path("output") / file_name
-    if not file_path.exists():
-        return JSONResponse(status_code=404, content={"detail": "Not Found"})
-    return FileResponse(str(file_path), media_type="video/mp4", filename=file_name)
+@app.get("/download/{filename}")
+async def download_video(filename: str):
+    """Download generated video file"""
+    file_path = f"/tmp/outputs/{filename}"
+    if os.path.exists(file_path):
+        return FileResponse(
+            file_path,
+            media_type="video/mp4",
+            filename=filename
+        )
+    raise HTTPException(
+        status_code=404,
+        detail="File not found. It may have expired or was never generated."
+    )
