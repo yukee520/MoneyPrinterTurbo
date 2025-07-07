@@ -1,67 +1,52 @@
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
-import subprocess
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from pathlib import Path
+import uuid
 import os
-import time
+from moviepy.editor import TextClip, concatenate_videoclips
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# Create output directory if it doesn't exist
-os.makedirs("/tmp/outputs", exist_ok=True)
+# Serve the /output folder as static files
+app.mount("/files", StaticFiles(directory="output"), name="output")
+
+# Define input structure
+class PromptRequest(BaseModel):
+    prompt: str
 
 @app.get("/")
 async def root():
-    return {"message": "Money Printer Turbo API is live", "docs": "/docs"}
+    return {"message": "Money Printer Turbo is live. POST to /generate"}
 
 @app.post("/generate")
-async def generate(request: Request):
-    try:
-        # Get JSON data from request
-        data = await request.json()
-        text = data.get("text", "Default text")
-        
-        # Generate filename
-        filename = f"video_{int(time.time())}.mp4"
-        output_path = f"/tmp/outputs/{filename}"
-        
-        # Run money printer turbo (simplified command)
-        cmd = [
-            "python3",
-            "-m",
-            "money_printer_turbo",
-            "--text", text,
-            "--output", output_path
-        ]
-        
-        # Run command with error capturing
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode != 0:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": "Generation failed",
-                    "stdout": result.stdout,
-                    "stderr": result.stderr
-                }
-            )
-            
-        return {
-            "status": "success",
-            "download_url": f"/download/{filename}"
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def generate(request: PromptRequest):
+    prompt_text = request.prompt.strip()
+    if not prompt_text:
+        return JSONResponse(content={"error": "Prompt is empty"}, status_code=400)
 
-@app.get("/download/{filename}")
-async def download_file(filename: str):
-    file_path = f"/tmp/outputs/{filename}"
-    if os.path.exists(file_path):
-        return FileResponse(file_path, media_type='video/mp4', filename=filename)
-    raise HTTPException(status_code=404, detail="File not found")
+    # Unique filename
+    filename = f"{uuid.uuid4().hex}.mp4"
+    output_path = Path("output") / filename
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Generate simple text clip
+    try:
+        clip = TextClip(prompt_text, fontsize=70, color='white', bg_color='black', size=(720, 1280)).set_duration(5)
+        clip.write_videofile(str(output_path), fps=24, codec='libx264', audio=False)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+    return {"status": "video generated", "file": filename}
+
+@app.get("/ping")
+async def ping():
+    return {"status": "OK"}
+
+@app.get("/files/{file_name}")
+async def serve_file(file_name: str):
+    file_path = Path("output") / file_name
+    if not file_path.exists():
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return FileResponse(str(file_path), media_type="video/mp4", filename=file_name)
