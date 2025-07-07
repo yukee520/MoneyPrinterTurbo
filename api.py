@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse
-import subprocess
+from fastapi.responses import JSONResponse
+import requests
 import os
-import time
 import logging
+from typing import Optional
 from pydantic import BaseModel
 
 # Configure logging
@@ -12,107 +12,87 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Configuration
-OUTPUT_DIR = "/tmp/outputs"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# HuggingFace Configuration
+HF_API_URL = "https://api-inference.huggingface.co/models/deepseek-ai/deepseek-llm-7b"
+HF_TOKEN = os.getenv("HF_API_TOKEN")  # Set in Render.com environment variables
 
-class VideoRequest(BaseModel):
-    text: str = "To the moon!"
-    duration: int = 5
-    width: int = 1280
-    height: int = 720
-    bg_color: str = "#121212"
-    text_color: str = "white"
+class ScriptRequest(BaseModel):
+    title: str
+    style: Optional[str] = "viral"  # viral/educational/funny
+    max_length: Optional[int] = 150  # Token limit
 
-@app.get("/")
-async def health_check():
-    return {"status": "ready", "message": "Money Printer Turbo API"}
-
-@app.post("/generate")
-async def generate_video(request: Request):
-    """Generate video with progress tracking"""
-    start_time = time.time()
+@app.post("/generate-script")
+async def generate_script(request: ScriptRequest):
+    """Generate viral script using DeepSeek-7B"""
     try:
-        # Parse request
-        data = await request.json()
-        req = VideoRequest(**data)
-        logger.info(f"Generation request: {data}")
+        # Prepare prompt
+        prompt = f"""
+        Create a 15-second {request.style} video script about: {request.title}
+        Structure:
+        [HOOK] - Grab attention in 3 seconds
+        [CONTENT] - Valuable information
+        [CTA] - Strong call-to-action
+        """
         
-        # Create output file
-        filename = f"video_{int(time.time())}.mp4"
-        output_path = f"{OUTPUT_DIR}/{filename}"
+        # Call HuggingFace API
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": request.max_length,
+                "temperature": 0.7
+            }
+        }
         
-        # FFmpeg command (Render.com has ffmpeg pre-installed)
-        cmd = [
-            "ffmpeg",
-            "-f", "lavfi",
-            "-i", f"color=c={req.bg_color}:s={req.width}x{req.height}:d={req.duration}",
-            "-vf", f"drawtext=text='{req.text}':fontcolor={req.text_color}:x=(w-text_w)/2:y=(h-text_h)/2",
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-y",  # Overwrite if exists
-            output_path
-        ]
-        
-        logger.info(f"Executing: {' '.join(cmd)}")
-        
-        # Run FFmpeg with timeout
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30  # 30 second timeout
-            )
-        except subprocess.TimeoutExpired:
-            logger.error("FFmpeg timed out")
-            raise HTTPException(500, "Video generation timed out")
-        
-        if result.returncode != 0:
-            logger.error(f"FFmpeg failed: {result.stderr}")
-            raise HTTPException(500, f"Video generation failed: {result.stderr}")
-        
-        # Verify output
-        if not os.path.exists(output_path):
-            logger.error("Output file not created")
-            raise HTTPException(500, "Output file not generated")
-        
-        file_size = os.path.getsize(output_path) / (1024 * 1024)  # MB
-        
-        return JSONResponse(
-            content={
-                "status": "success",
-                "filename": filename,
-                "download_url": f"/download/{filename}",
-                "details": {
-                    "text": req.text,
-                    "duration": req.duration,
-                    "resolution": f"{req.width}x{req.height}",
-                    "size_mb": round(file_size, 2),
-                    "generation_time_sec": round(time.time() - start_time, 2)
-                }
-            },
-            status_code=200
+        response = requests.post(
+            HF_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=30  # 30-second timeout
         )
         
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"HuggingFace error: {response.text}"
+            )
+            
+        generated_text = response.json()[0]["generated_text"]
+        
+        # Post-process to ensure structure
+        if "[HOOK]" not in generated_text:
+            generated_text = f"[HOOK] {request.title}\n[CONTENT] {generated_text}\n[CTA] Follow for more!"
+            
+        return {
+            "status": "success",
+            "script": generated_text,
+            "model": "deepseek-llm-7b"
+        }
+        
+    except requests.Timeout:
+        logger.warning("HuggingFace timeout - using fallback")
+        return generate_fallback_script(request.title)
     except Exception as e:
-        logger.error(f"Generation error: {str(e)}")
+        logger.error(f"Script generation failed: {str(e)}")
         raise HTTPException(500, detail=str(e))
 
-@app.get("/download/{filename}")
-async def download_video(filename: str):
-    """Download generated video"""
-    file_path = f"{OUTPUT_DIR}/{filename}"
-    if not os.path.exists(file_path):
-        raise HTTPException(404, "File not found")
+def generate_fallback_script(title: str) -> dict:
+    """Local template fallback if API fails"""
+    templates = {
+        "viral": (
+            "[HOOK] This {title} trick went viral!\n"
+            "[CONTENT] Experts don't want you to know this...\n"
+            "[CTA] Like & share if you agree!"
+        ),
+        "educational": (
+            "[HOOK] The truth about {title}\n"
+            "[CONTENT] Here's what research shows...\n"
+            "[CTA] Follow for daily tips!"
+        )
+    }
     
-    return FileResponse(
-        file_path,
-        media_type="video/mp4",
-        filename=filename,
-        headers={
-            "Content-Disposition": f"attachment; filename={filename}",
-            "Cache-Control": "no-store"
-        }
-    )
+    return {
+        "status": "fallback",
+        "script": templates["viral"].format(title=title),
+        "model": "template"
+    }
